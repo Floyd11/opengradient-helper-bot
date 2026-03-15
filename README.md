@@ -33,8 +33,8 @@ User (Telegram)
 
 ```bash
 # 1. Clone
-git clone https://github.com/floyd11/og-helper-bot
-cd og-helper-bot
+git clone https://github.com/Floyd11/opengradient-helper-bot
+cd opengradient-helper-bot
 
 # 2. Virtual environment
 python3.10 -m venv venv
