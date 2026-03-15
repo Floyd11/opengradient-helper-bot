@@ -48,7 +48,7 @@ GITHUB_RAW_BASE: str = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
 
 BASESCAN_TX_URL: str = "https://sepolia.basescan.org/tx/"
 OPG_APPROVAL_AMOUNT: float = 5.0
-DEFAULT_MODEL: og.TEE_LLM = og.TEE_LLM.GPT_5
+DEFAULT_MODEL: og.TEE_LLM = og.TEE_LLM.GEMINI_2_5_FLASH
 MAX_TOKENS: int = 800
 
 if not BOT_TOKEN:
@@ -174,8 +174,8 @@ async def get_llm() -> og.LLM:
         try:
             # Assume og.LLM init is light, but the approval check is a network call
             _llm = og.LLM(private_key=OG_PRIVATE_KEY)
-            # CRITICAL: ensure_opg_approval is an on-chain/network call and should be awaited
-            approval = await _llm.ensure_opg_approval(opg_amount=OPG_APPROVAL_AMOUNT)
+            # CRITICAL: ensure_opg_approval is an on-chain/network call but not async in this SDK
+            approval = _llm.ensure_opg_approval(opg_amount=OPG_APPROVAL_AMOUNT)
             if hasattr(approval, "tx_hash") and approval.tx_hash:
                 logger.info(f"💰 Permit2 approval tx: {BASESCAN_TX_URL}{approval.tx_hash}")
             else:
@@ -275,9 +275,13 @@ async def ask_llm(question: str, context: Optional[str] = None) -> tuple[str, st
             return "❌ Error: LLM returned no data.", ""
             
         content = result.chat_output.get("content", "") if result.chat_output else ""
-        payment_hash = getattr(result, "payment_hash", "") or ""
         
-        return content, payment_hash
+        # Try different hash fields depending on SDK version/gateway setup
+        payment_hash = getattr(result, "payment_hash", None)
+        if not payment_hash:
+            payment_hash = getattr(result, "transaction_hash", "")
+            
+        return content, (payment_hash or "")
     except Exception as e:
         logger.error(f"LLM chat call failed: {e}")
         raise
