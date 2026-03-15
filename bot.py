@@ -20,6 +20,7 @@ import opengradient as og
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
+    BotCommand,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -636,6 +637,17 @@ async def main() -> None:
     except Exception as e:
         logger.error(f"LLM init failed: {e}")
         logger.warning("Bot will start, but LLM calls will fail until OPG is funded")
+
+    # Register native Bot Commands (Menu)
+    commands = [
+        BotCommand(command="start", description="Welcome message"),
+        BotCommand(command="about", description="What is OpenGradient?"),
+        BotCommand(command="snippets", description="Browse Cookbook snippets"),
+        BotCommand(command="models", description="Browse Model Hub"),
+        BotCommand(command="faucet", description="Get testnet OPG tokens"),
+    ]
+    await bot.set_my_commands(commands)
+    logger.info("✅ Bot commands (menu) registered")
 
     await dp.start_polling(bot)
 
