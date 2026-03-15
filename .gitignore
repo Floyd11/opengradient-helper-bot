@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.lib/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.env
+venv/
+
+# Node.js (Existing)
+node_modules/
+.pnp
+.pnp.js
+
+# 2. СЕКРЕТЫ И ПАРОЛИ (КРИТИЧЕСКИ ВАЖНО - защита от утечек)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+
+# 3. СБОРКА И ТЕСТЫ (Сгенерированный код React/Next.js/Fullstack)
+build/
+dist/
+.next/
+out/
+coverage/
+
+# 4. ЛОГИ (Системный мусор ошибок)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.log
+
+# 5. СИСТЕМНЫЕ ФАЙЛЫ ОС (Скрытые файлы Windows и macOS)
+.DS_Store
+Thumbs.db
+
+# 6. НАСТРОЙКИ РЕДАКТОРОВ (Чтобы не перезаписывать настройки коллег)
+.idea/
+.vscode/
