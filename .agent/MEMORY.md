@@ -14,6 +14,7 @@
 - **99-skill creator**: Guide for creating new skills.
 
 ## Recent Changes
+- **2026-03-16**: Implemented retry mechanism for LLM calls in `bot.py` to handle potential gateway timeouts and refresh the client session.
 - **2026-03-15**: Installed `Telegram Bot Builder` skill from `davila7/claude-code-templates`.
 - **2026-03-15**: Conducted full QA & Security Audit of `og-helper-bot`. Implemented fixes for async/await, Markdown formatting, and message length handling.
 - **2026-03-15**: Consolidated project structure by moving `.agent/`, `.gitignore`, and `GEMINI.md` from the scratch directory to the main project root.

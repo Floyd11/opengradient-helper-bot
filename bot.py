@@ -191,6 +191,18 @@ async def get_llm() -> og.LLM:
     return _llm
 
 
+async def reset_llm():
+    """Clear the LLM singleton to force re-initialization."""
+    global _llm
+    if _llm:
+        try:
+            await _llm.close()
+        except:
+            pass
+        _llm = None
+    logger.info("♻️ og.LLM singleton reset")
+
+
 # ---------------------------------------------------------------------------
 # GitHub snippet fetcher
 # ---------------------------------------------------------------------------
@@ -285,6 +297,9 @@ async def ask_llm(question: str, context: Optional[str] = None) -> tuple[str, st
         return content, (payment_hash or "")
     except Exception as e:
         logger.error(f"LLM chat call failed: {e}")
+        # If it's a payment or protocol error, reset the singleton to try a different TEE next time
+        if "payment" in str(e).lower() or "TEE" in str(e):
+            await reset_llm()
         raise
 
 
@@ -526,13 +541,21 @@ async def callback_snippet(query: CallbackQuery) -> None:
             context=code,
         )
     except Exception as e:
-        logger.error(f"LLM error for {path}: {e}")
-        await thinking_msg.edit_text(
-            f"❌ LLM error: `{html.escape(str(e))}`\n\n"
-            f"[Open file on GitHub]({snippet_github_url(path)})",
-            parse_mode="Markdown",
-        )
-        return
+        logger.warning(f"First LLM attempt for callback failed, retrying: {e}")
+        try:
+            answer, payment_hash = await ask_llm(
+                question="Explain this file: what it does, how to use it, and what to watch out for.",
+                context=code,
+            )
+        except Exception as e2:
+            logger.error(f"LLM error for {path} after retry: {e2}")
+            await thinking_msg.edit_text(
+                f"❌ LLM error: `{html.escape(str(e2))}`\n\n"
+                f"[Open file on GitHub]({snippet_github_url(path)})\n"
+                f"The OpenGradient TEE gateway might be experiencing high load.",
+                parse_mode="Markdown",
+            )
+            return
 
     # Escape answer text to prevent Markdown crashes from unclosed _ or *
     safe_answer = escape_markdown(answer)
@@ -601,15 +624,22 @@ async def handle_text(message: Message) -> None:
             logger.info(f"Injecting context from: {snippet_path}")
 
     try:
+        # Try call with current singleton
         answer, payment_hash = await ask_llm(user_text, code_context)
     except Exception as e:
-        logger.error(f"LLM error: {e}")
-        await thinking_msg.edit_text(
-            f"❌ LLM error: `{html.escape(str(e))}`\n\n"
-            "Check your OPG balance: /faucet",
-            parse_mode="Markdown",
-        )
-        return
+        logger.warning(f"First LLM attempt failed, retrying with fresh client: {e}")
+        try:
+            # Re-fetch LLM (will re-initialize if last call failed and reset it)
+            answer, payment_hash = await ask_llm(user_text, code_context)
+        except Exception as e2:
+            logger.error(f"LLM error after retry: {e2}")
+            await thinking_msg.edit_text(
+                f"❌ LLM error: `{html.escape(str(e2))}`\n\n"
+                "The OpenGradient TEE gateway might be experiencing high load. "
+                "Check your OPG balance: /faucet",
+                parse_mode="Markdown",
+            )
+            return
 
     safe_answer = escape_markdown(answer)
     proof = format_proof_line(payment_hash)
