@@ -46,6 +46,7 @@ BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 OG_PRIVATE_KEY: str = os.getenv("OG_PRIVATE_KEY", "")
 GITHUB_REPO: str = os.getenv("GITHUB_REPO", "your_username/OpenGradient-Cookbook")
 GITHUB_RAW_BASE: str = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
+DOCS_BASE_URL: str = "https://docs.opengradient.ai"
 
 BASESCAN_TX_URL: str = "https://sepolia.basescan.org/tx/"
 OPG_APPROVAL_AMOUNT: float = 5.0
@@ -56,6 +57,38 @@ if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN not set in .env")
 if not OG_PRIVATE_KEY:
     raise ValueError("OG_PRIVATE_KEY not set in .env")
+
+# ---------------------------------------------------------------------------
+# Per-user conversation history (in-memory, resets on bot restart)
+# ---------------------------------------------------------------------------
+# Stores the last MAX_HISTORY_TURNS exchanges per user.
+# Key: Telegram user_id (int)
+# Value: list of message dicts with "role" and "content" keys
+MAX_HISTORY_TURNS: int = 3  # keep last 3 user+assistant pairs = 6 messages
+conversation_history: dict[int, list[dict]] = {}
+
+
+def get_history(user_id: int) -> list[dict]:
+    """Return the conversation history for a user, or empty list if none."""
+    return conversation_history.get(user_id, [])
+
+
+def add_to_history(user_id: int, user_msg: str, assistant_msg: str) -> None:
+    """
+    Append a user+assistant exchange to the history.
+    Trims to MAX_HISTORY_TURNS pairs automatically.
+    """
+    if user_id not in conversation_history:
+        conversation_history[user_id] = []
+
+    history = conversation_history[user_id]
+    history.append({"role": "user", "content": user_msg})
+    history.append({"role": "assistant", "content": assistant_msg})
+
+    # Keep only the last MAX_HISTORY_TURNS pairs (each pair = 2 messages)
+    max_messages = MAX_HISTORY_TURNS * 2
+    if len(history) > max_messages:
+        conversation_history[user_id] = history[-max_messages:]
 
 # ---------------------------------------------------------------------------
 # Intent map: keywords → cookbook file path
@@ -76,6 +109,61 @@ SNIPPET_INTENT_MAP: list[tuple[list[str], str]] = [
     (["defi", "audit", "smart contract", "reentrancy", "vulnerability"], "boilerplates/defi-risk-analyzer/analyzer.py"),
     (["digital twin", "twin.fun", "bonding curve", "shares"], "boilerplates/digital-twins-tracker/tracker.py"),
 ]
+
+# ---------------------------------------------------------------------------
+# Docs intent map: keywords → docs page path (relative to DOCS_BASE_URL)
+# ---------------------------------------------------------------------------
+# Maps user question keywords to the most relevant documentation page.
+# These are fetched live from docs.opengradient.ai and injected as context.
+DOCS_INTENT_MAP: list[tuple[list[str], str]] = [
+    (
+        ["tee", "trusted execution", "attestation", "hardware proof", "intel tdx", "enclave"],
+        "learn/onchain_inference/llm_execution.html",
+    ),
+    (
+        ["settlement", "settlement mode", "batch hashed", "individual full", "private mode", "on-chain proof"],
+        "developers/sdk/llm.html",
+    ),
+    (
+        ["x402", "payment protocol", "402 payment", "payment required", "x402 gateway"],
+        "developers/x402/",
+    ),
+    (
+        ["architecture", "how does opengradient work", "inference node", "full node", "network design"],
+        "learn/architecture/",
+    ),
+    (
+        ["memsync", "persistent memory", "memory api", "memory layer", "user profile", "semantic memory"],
+        "developers/memsync/tutorial.html",
+    ),
+    (
+        ["model hub", "walrus", "onnx format", "model restrictions", "model upload", "model registry"],
+        "models/model_hub/",
+    ),
+    (
+        ["use case", "use cases", "what can i build", "what to build", "applications"],
+        "about/use_cases.html",
+    ),
+    (
+        ["deploy", "deployment", "rpc url", "chain id", "testnet", "network config"],
+        "learn/network/deployment.html",
+    ),
+]
+
+
+def detect_docs_intent(text: str) -> Optional[str]:
+    """
+    Match a user message to the most relevant documentation page path.
+
+    Returns:
+        Relative docs path (e.g. 'learn/onchain_inference/llm_execution.html')
+        if matched, None otherwise.
+    """
+    text_lower = text.lower()
+    for keywords, path in DOCS_INTENT_MAP:
+        if any(kw in text_lower for kw in keywords):
+            return path
+    return None
 
 # ---------------------------------------------------------------------------
 # Static text
@@ -230,6 +318,48 @@ async def fetch_snippet(path: str) -> Optional[str]:
         return None
 
 
+async def fetch_docs(path: str) -> Optional[str]:
+    """
+    Fetch a documentation page from docs.opengradient.ai and return clean text.
+
+    Fetches the HTML page, strips all HTML tags, collapses whitespace,
+    and truncates to 4000 characters to stay within LLM token budget.
+
+    Args:
+        path: Relative path to the docs page, e.g. 'learn/onchain_inference/llm_execution.html'
+
+    Returns:
+        Clean text content of the page, or None on error.
+    """
+    url = f"{DOCS_BASE_URL}/{path}"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            raw_html = resp.text
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"Docs fetch {url} → HTTP {e.response.status_code}")
+        return None
+    except httpx.RequestError as e:
+        logger.warning(f"Docs fetch network error for {url}: {e}")
+        return None
+
+    # Strip HTML tags using a simple regex — no extra dependencies needed
+    # Remove script and style blocks first (they contain no useful text)
+    no_scripts = re.sub(r"<(script|style)[^>]*>.*?</(script|style)>", "", raw_html, flags=re.DOTALL | re.IGNORECASE)
+    # Remove all remaining HTML tags
+    no_tags = re.sub(r"<[^>]+>", " ", no_scripts)
+    # Collapse multiple whitespace/newlines into single spaces
+    clean = re.sub(r"\s+", " ", no_tags).strip()
+
+    # Truncate to 4000 chars — enough for good context without overloading the LLM
+    if len(clean) > 4000:
+        clean = clean[:4000] + " ... [content truncated — see full docs at the link below]"
+
+    logger.info(f"Fetched docs page: {url} ({len(clean)} chars)")
+    return clean
+
+
 def detect_intent(text: str) -> Optional[str]:
     """
     Match a user message to the most relevant Cookbook snippet path.
@@ -247,13 +377,18 @@ def detect_intent(text: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # LLM call
 # ---------------------------------------------------------------------------
-async def ask_llm(question: str, context: Optional[str] = None) -> tuple[str, str]:
+async def ask_llm(
+    question: str,
+    context: Optional[str] = None,
+    history: Optional[list[dict]] = None,
+) -> tuple[str, str]:
     """
-    Send a question to og.LLM, optionally with a code snippet as context.
+    Send a question to og.LLM with optional code context and conversation history.
 
     Args:
-        question: User's question
-        context: Optional code to inject as knowledge context
+        question: User's current question
+        context: Optional code snippet or docs page to inject as knowledge context
+        history: Optional list of previous {"role", "content"} message dicts
 
     Returns:
         Tuple of (answer_text, payment_hash)
@@ -271,37 +406,42 @@ async def ask_llm(question: str, context: Optional[str] = None) -> tuple[str, st
     else:
         user_content = question
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
+    # Build messages: system prompt + history + current user message
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    if history:
+        messages.extend(history)
+
+    messages.append({"role": "user", "content": user_content})
 
     try:
-        try:
-            result = await asyncio.wait_for(
-                llm.chat(
-                    model=DEFAULT_MODEL,
-                    messages=messages,
-                    max_tokens=MAX_TOKENS,
-                    temperature=0.1,
-                ),
-                timeout=45.0,  # TEE nodes can be slow — 45s before giving up
-            )
-        except asyncio.TimeoutError:
-            logger.warning("LLM call timed out after 45s")
-            raise RuntimeError("LLM request timed out — TEE node is slow. Please try again.")
+        result = await asyncio.wait_for(
+            llm.chat(
+                model=DEFAULT_MODEL,
+                messages=messages,
+                max_tokens=MAX_TOKENS,
+                temperature=0.1,
+            ),
+            timeout=45.0,
+        )
+
         if not result or not hasattr(result, "chat_output"):
             logger.error("LLM returned an empty or invalid result object")
             return "❌ Error: LLM returned no data.", ""
-            
+
         content = result.chat_output.get("content", "") if result.chat_output else ""
-        
+
         # Try different hash fields depending on SDK version/gateway setup
         payment_hash = getattr(result, "payment_hash", None)
         if not payment_hash:
             payment_hash = getattr(result, "transaction_hash", "")
-            
+
         return content, (payment_hash or "")
+
+    except asyncio.TimeoutError:
+        logger.warning("LLM call timed out after 45s")
+        raise RuntimeError("LLM request timed out — TEE node is slow. Please try again.")
+
     except Exception as e:
         logger.error(f"LLM chat call failed: {e}")
         # If it's a payment or protocol error, reset the singleton to try a different TEE next time
@@ -615,30 +755,48 @@ async def callback_snippet(query: CallbackQuery) -> None:
 async def handle_text(message: Message) -> None:
     """
     Handle any plain text message:
-    1. Try to detect a relevant snippet based on keywords
-    2. Fetch it from GitHub if found
-    3. Call og.LLM with (or without) code context
-    4. Reply with answer + TEE proof footer
+    1. Load this user's conversation history
+    2. Try to detect a relevant snippet based on keywords
+    3. Fetch it from GitHub if found
+    4. Call og.LLM with history + (optional) code context
+    5. Save the exchange to history
+    6. Reply with answer + TEE proof footer
     """
     user_text = message.text.strip()
+    user_id = message.from_user.id
     snippet_path = detect_intent(user_text)
 
     thinking_msg = await message.answer("⏳ Thinking...")
 
     code_context: Optional[str] = None
+    context_source_note: str = ""  # shown to user at bottom of reply
+
     if snippet_path:
+        # Snippet takes priority over docs
         code_context = await fetch_snippet(snippet_path)
         if code_context:
-            logger.info(f"Injecting context from: {snippet_path}")
+            logger.info(f"Injecting context from snippet: {snippet_path}")
+            context_source_note = f"📎 _Context used:_ [{snippet_path}]({snippet_github_url(snippet_path)})"
+    else:
+        # No snippet matched — try docs pages
+        docs_path = detect_docs_intent(user_text)
+        if docs_path:
+            docs_text = await fetch_docs(docs_path)
+            if docs_text:
+                code_context = docs_text
+                docs_url = f"{DOCS_BASE_URL}/{docs_path}"
+                logger.info(f"Injecting context from docs: {docs_url}")
+                context_source_note = f"📖 _Source:_ [docs.opengradient.ai/{docs_path}]({docs_url})"
+
+    # Load this user's history for multi-turn context
+    history = get_history(user_id)
 
     try:
-        # Try call with current singleton
-        answer, payment_hash = await ask_llm(user_text, code_context)
+        answer, payment_hash = await ask_llm(user_text, code_context, history)
     except Exception as e:
         logger.warning(f"First LLM attempt failed, retrying with fresh client: {e}")
         try:
-            # Re-fetch LLM (will re-initialize if last call failed and reset it)
-            answer, payment_hash = await ask_llm(user_text, code_context)
+            answer, payment_hash = await ask_llm(user_text, code_context, history)
         except Exception as e2:
             logger.error(f"LLM error after retry: {e2}")
             await thinking_msg.edit_text(
@@ -649,14 +807,17 @@ async def handle_text(message: Message) -> None:
             )
             return
 
+    # Save this exchange to history BEFORE formatting
+    add_to_history(user_id, user_text, answer)
+
     safe_answer = escape_markdown(answer)
     proof = format_proof_line(payment_hash)
-    context_note = ""
-    if snippet_path:
-        context_note = f"\n\n📎 _Context used:_ [{snippet_path}]({snippet_github_url(snippet_path)})"
+
+    # context_source_note was set above (either snippet or docs, or empty string)
+    footer = f"\n\n{context_source_note}" if context_source_note else ""
 
     await thinking_msg.edit_text(
-        f"{safe_answer}{context_note}\n\n{proof}",
+        f"{safe_answer}{footer}\n\n{proof}",
         parse_mode="Markdown",
         disable_web_page_preview=True,
     )
