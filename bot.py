@@ -218,7 +218,7 @@ async def fetch_snippet(path: str) -> Optional[str]:
     """
     url = f"{GITHUB_RAW_BASE}/{path}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             return resp.text
@@ -277,12 +277,19 @@ async def ask_llm(question: str, context: Optional[str] = None) -> tuple[str, st
     ]
 
     try:
-        result = await llm.chat(
-            model=DEFAULT_MODEL,
-            messages=messages,
-            max_tokens=MAX_TOKENS,
-            temperature=0.1,
-        )
+        try:
+            result = await asyncio.wait_for(
+                llm.chat(
+                    model=DEFAULT_MODEL,
+                    messages=messages,
+                    max_tokens=MAX_TOKENS,
+                    temperature=0.1,
+                ),
+                timeout=45.0,  # TEE nodes can be slow — 45s before giving up
+            )
+        except asyncio.TimeoutError:
+            logger.warning("LLM call timed out after 45s")
+            raise RuntimeError("LLM request timed out — TEE node is slow. Please try again.")
         if not result or not hasattr(result, "chat_output"):
             logger.error("LLM returned an empty or invalid result object")
             return "❌ Error: LLM returned no data.", ""
@@ -520,7 +527,8 @@ async def callback_snippet(query: CallbackQuery) -> None:
         return
 
     thinking_msg = await query.message.answer(
-        f"⏳ Fetching *{description}* and generating explanation...",
+        f"⏳ Fetching *{description}* and generating explanation...\n"
+        f"_This may take up to 45 seconds..._",
         parse_mode="Markdown",
     )
 
@@ -588,7 +596,7 @@ async def callback_snippet(query: CallbackQuery) -> None:
     else:
         response = (
             f"📄 *{description}*\n\n"
-            f"{answer}\n\n"
+            f"{safe_answer}\n\n"
             f"```python\n{code_preview}\n```\n\n"
             f"[📂 Full file on GitHub]({github_url})\n\n"
             f"{proof}"
