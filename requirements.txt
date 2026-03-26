@@ -1,4 +1,4 @@
 aiogram==3.13.1
-opengradient>=0.1.0
+opengradient==0.9.3
 httpx>=0.27.0
 python-dotenv>=1.0.0
