@@ -14,6 +14,7 @@
 - **99-skill creator**: Guide for creating new skills.
 
 ## Recent Changes
+- **2026-03-27**: Rewrote git history to attribute AI Agent commits to **Floyd11** (`floyd1611@gmail.com`). Set local git configuration to maintain this identity for future commits.
 - **2026-03-26**: Upgraded `opengradient` SDK from 0.9.0 to 0.9.3. Verified TEE inference, Permit2 allowance, and successful bot startup.
 - **2026-03-16**: Implemented retry mechanism for LLM calls in `bot.py` to handle potential gateway timeouts and refresh the client session.
 - **2026-03-15**: Installed `Telegram Bot Builder` skill from `davila7/claude-code-templates`.
