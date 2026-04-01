@@ -14,6 +14,8 @@
 - **99-skill creator**: Guide for creating new skills.
 
 ## Recent Changes
+- **2026-04-01**: Upgraded `opengradient` SDK to `0.9.6`. Fixed breaking change in `ensure_opg_approval` by renaming `opg_amount` to `min_allowance`. Verified bot stability and successfull startup.
+- **2026-04-01**: Added "Skills" section to the bot (`/skills`). Integrated `opengradient-connect-skill` (Floyd11) and `opengradient-brand-skill` (golldyck) with direct GitHub links and AI context. Fixed command menu registry to show `/skills` in Telegram autocomplete.
 - **2026-03-27**: Rewrote git history to attribute AI Agent commits to **Floyd11** (`floyd1611@gmail.com`). Set local git configuration to maintain this identity for future commits.
 - **2026-03-26**: Upgraded `opengradient` SDK from 0.9.0 to 0.9.3. Verified TEE inference, Permit2 allowance, and successful bot startup.
 - **2026-03-16**: Implemented retry mechanism for LLM calls in `bot.py` to handle potential gateway timeouts and refresh the client session.

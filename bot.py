@@ -49,7 +49,7 @@ GITHUB_RAW_BASE: str = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
 DOCS_BASE_URL: str = "https://docs.opengradient.ai"
 
 BASESCAN_TX_URL: str = "https://sepolia.basescan.org/tx/"
-OPG_APPROVAL_AMOUNT: float = 5.0
+OPG_APPROVAL_AMOUNT: float = 0.1
 DEFAULT_MODEL: og.TEE_LLM = og.TEE_LLM.GEMINI_2_5_FLASH
 MAX_TOKENS: int = 800
 
@@ -179,12 +179,30 @@ I help Web3 and AI developers build on **OpenGradient**, the infrastructure for 
 • Explain code from the [OpenGradient Cookbook](https://github.com/{GITHUB_REPO})
 • Answer questions about x402 / TEE / MemSync / Model Hub
 • Show code snippets with inline buttons
+• Provide community-developed **AI Agent Skills**
 
 **Commands:**
 /about — What is OpenGradient?
 /snippets — Browse the Cookbook snippet catalog
+/skills — Browse community AI Agent Skills
 /models — Models available in the Model Hub
 /faucet — Get testnet $OPG tokens
+""".strip()
+
+SKILLS_TEXT = """
+🛠 **OpenGradient Community Skills**
+
+These are unofficial, community-developed skills for AI Agents (Claude, Gemini, etc.) to enhance their capabilities with OpenGradient.
+
+🔌 **OpenGradient Connect**
+Modular skill for SDK integration, TEE diagnostics, and safety protocols.
+_By Floyd11_
+
+🎨 **OpenGradient Brand**
+Brand assets, CSS tokens, and UI demos for consistent branding.
+_By golldyck_
+
+Select a skill below to view its repository:
 """.strip()
 
 ABOUT_TEXT = """
@@ -237,6 +255,10 @@ Key facts about OpenGradient:
 9. MemSync REST API base: https://api.memchat.io/v1 — auth via X-API-Key header
 10. Supported models: og.TEE_LLM.GPT_5, CLAUDE_SONNET_4_6, GEMINI_2_5_FLASH, GROK_4
 
+Community Skills:
+- OpenGradient Connect (@Floyd11/opengradient-connect-skill): Modular SDK integration for agents.
+- OpenGradient Brand (@golldyck/opengradient-brand-skill): Branding assets and CDN.
+
 Response rules:
 - Be concise and technically precise (3-4 paragraphs max)
 - If code is provided as context, explain it — don't just paraphrase it line by line
@@ -264,7 +286,7 @@ async def get_llm() -> og.LLM:
             # Assume og.LLM init is light, but the approval check is a network call
             _llm = og.LLM(private_key=OG_PRIVATE_KEY)
             # CRITICAL: ensure_opg_approval is an on-chain/network call but not async in this SDK
-            approval = _llm.ensure_opg_approval(opg_amount=OPG_APPROVAL_AMOUNT)
+            approval = _llm.ensure_opg_approval(min_allowance=OPG_APPROVAL_AMOUNT)
             if hasattr(approval, "tx_hash") and approval.tx_hash:
                 logger.info(f"💰 Permit2 approval tx: {BASESCAN_TX_URL}{approval.tx_hash}")
             else:
@@ -569,6 +591,25 @@ def models_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def skills_keyboard() -> InlineKeyboardMarkup:
+    """Inline menu for /skills — community-developed skills."""
+    buttons = [
+        [InlineKeyboardButton(
+            text="🔌 OpenGradient Connect Skill",
+            url="https://github.com/Floyd11/opengradient-connect-skill",
+        )],
+        [InlineKeyboardButton(
+            text="🎨 OpenGradient Brand Skill",
+            url="https://github.com/golldyck/opengradient-brand-skill",
+        )],
+        [InlineKeyboardButton(
+            text="📖 Browse All Skills",
+            url="https://github.com/topics/opengradient-skill",
+        )],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 # Callback ID → cookbook file path (must match snippets_keyboard buttons)
 CALLBACK_TO_PATH: dict[str, str] = {
     "snip:01": "snippets/01_llm_completion_basic.py",
@@ -637,6 +678,16 @@ async def cmd_snippets(message: Message) -> None:
         "Pick a topic — I'll fetch the code and explain it:",
         parse_mode="Markdown",
         reply_markup=snippets_keyboard(),
+    )
+
+
+@dp.message(Command("skills"))
+async def cmd_skills(message: Message) -> None:
+    await message.answer(
+        SKILLS_TEXT,
+        parse_mode="Markdown",
+        reply_markup=skills_keyboard(),
+        disable_web_page_preview=True,
     )
 
 
@@ -842,6 +893,7 @@ async def main() -> None:
         BotCommand(command="start", description="Welcome message"),
         BotCommand(command="about", description="What is OpenGradient?"),
         BotCommand(command="snippets", description="Browse Cookbook snippets"),
+        BotCommand(command="skills", description="Browse community AI Agent Skills"),
         BotCommand(command="models", description="Browse Model Hub"),
         BotCommand(command="faucet", description="Get testnet OPG tokens"),
     ]
