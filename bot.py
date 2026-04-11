@@ -293,6 +293,8 @@ async def get_llm() -> og.LLM:
                 logger.info("💰 Permit2 allowance already sufficient")
         except Exception as e:
             logger.error(f"og.LLM initialization or Permit2 approval failed: {e}")
+            if "402" in str(e) or "payment" in str(e).lower():
+                logger.info("💸 Payment required. Use /faucet to get testnet tokens.")
             _llm = None  # Reset so it can be retried if it's transient
             raise RuntimeError(
                 f"OPG initialization failed: {e}\n"
@@ -467,7 +469,8 @@ async def ask_llm(
     except Exception as e:
         logger.error(f"LLM chat call failed: {e}")
         # If it's a payment or protocol error, reset the singleton to try a different TEE next time
-        if "payment" in str(e).lower() or "TEE" in str(e):
+        if "402" in str(e) or "payment" in str(e).lower() or "TEE" in str(e):
+            logger.info("🔄 402/TEE Error detected. Resetting LLM for retry...")
             await reset_llm()
         raise
 
@@ -748,10 +751,14 @@ async def callback_snippet(query: CallbackQuery) -> None:
             )
         except Exception as e2:
             logger.error(f"LLM error for {path} after retry: {e2}")
+            error_msg = str(e2)
+            if "402" in error_msg:
+                error_msg = "402 Payment Required. Please check your $OPG balance via /faucet."
+            
             await thinking_msg.edit_text(
-                f"❌ LLM error: `{html.escape(str(e2))}`\n\n"
+                f"❌ LLM error: `{error_msg}`\n\n"
                 f"[Open file on GitHub]({snippet_github_url(path)})\n"
-                f"The OpenGradient TEE gateway might be experiencing high load.",
+                f"The OpenGradient TEE gateway might be experiencing high load or your balance is insufficient.",
                 parse_mode="Markdown",
             )
             return
@@ -774,16 +781,27 @@ async def callback_snippet(query: CallbackQuery) -> None:
     # If the text part alone is very long, we might need to truncate the answer or split.
     # Here we split code into its own message if collective length is too big.
     if len(full_text) + len(code_preview) + 20 > 4000:
-        await thinking_msg.edit_text(
-            f"📄 *{description}*\n\n{safe_answer}\n\n{proof}",
-            parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        try:
+            await thinking_msg.edit_text(
+                f"📄 *{description}*\n\n{safe_answer}\n\n{proof}",
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.error(f"Markdown parse error: {e}")
+            await thinking_msg.edit_text(
+                f"📄 {description}\n\n{answer}\n\n{proof}",
+                parse_mode=None,
+                disable_web_page_preview=True,
+            )
         # Send code separately
-        await query.message.answer(
-            f"```python\n{code_preview}\n```\n\n[📂 Full code on GitHub]({github_url})",
-            parse_mode="Markdown",
-        )
+        try:
+            await query.message.answer(
+                f"```python\n{code_preview}\n```\n\n[📂 Full code on GitHub]({github_url})",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            await query.message.answer(f"Code preview omitted. Full code on GitHub: {github_url}")
     else:
         response = (
             f"📄 *{description}*\n\n"
@@ -792,11 +810,19 @@ async def callback_snippet(query: CallbackQuery) -> None:
             f"[📂 Full file on GitHub]({github_url})\n\n"
             f"{proof}"
         )
-        await thinking_msg.edit_text(
-            response,
-            parse_mode="Markdown",
-            disable_web_page_preview=True,
-        )
+        try:
+            await thinking_msg.edit_text(
+                response,
+                parse_mode="Markdown",
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.error(f"Markdown parse error: {e}")
+            await thinking_msg.edit_text(
+                f"📄 {description}\n\n{answer}\n\nCode preview omitted due to escaping errors.\n\n📂 Full file on GitHub: {github_url}\n\n{proof}",
+                parse_mode=None,
+                disable_web_page_preview=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -867,11 +893,22 @@ async def handle_text(message: Message) -> None:
     # context_source_note was set above (either snippet or docs, or empty string)
     footer = f"\n\n{context_source_note}" if context_source_note else ""
 
-    await thinking_msg.edit_text(
-        f"{safe_answer}{footer}\n\n{proof}",
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-    )
+    try:
+        await thinking_msg.edit_text(
+            f"{safe_answer}{footer}\n\n{proof}",
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        logger.error(f"Markdown parse error: {e}")
+        # Strip simple markdown links if we're sending plain text
+        import re
+        plain_footer = re.sub(r'\[(.*?)\]\((.*?)\)', r'\1: \2', footer) if footer else ""
+        await thinking_msg.edit_text(
+            f"{answer}{plain_footer}\n\n{proof}",
+            parse_mode=None,
+            disable_web_page_preview=True,
+        )
 
 
 # ---------------------------------------------------------------------------
